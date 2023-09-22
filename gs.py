@@ -143,14 +143,30 @@ def edit_body(args):
         if f.read() == default_template:
             print("No changeswere made, exiting without editing the PR.")
             return
-
     shell_out(f"gh pr edit {pr_url} --body-file {filename}")
+
+    # TODO: Rethink this. Something like jf sync, perhaps?
+    # shell_out(f"sl metaedit -l {filename}")
+
 
 def review(args):
     edit_body(args)
     pr_url = get_pr_url()
     add_reviewer("databricks/eng-kubernetes-runtime-team", pr_url)
     add_reviewer("databricks/eng-kubernetes-runtime-team", pr_url)
+
+def sync(args):
+    # TODO: Implement syncing a whole stack at once.
+    pr_url = get_pr_url()
+    title_and_body = json.loads(shell_out(f"gh pr view {pr_url} --json title,body"))
+    _, filename = tempfile.mkstemp(text=True)
+    with open(filename, 'w') as f:
+        f.write(title_and_body["title"])
+        f.write("\n")
+        f.write(title_and_body["body"])
+    
+    shell_out(f"sl metaedit -l {filename}")
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -178,6 +194,9 @@ def main():
 
     review_parser = subparsers.add_parser("review", help="Prepares a PR for review.")
     review_parser.set_defaults(func=review)
+
+    sync_parser = subparsers.add_parser("sync", help="Syncs local commit description with github")
+    sync_parser.set_defaults(func=sync)
 
 
     args = parser.parse_args()
