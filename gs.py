@@ -1,16 +1,12 @@
-# TODO:
-# 1. Update stack
-# 2. Add reviewers to stack 
-# 3. Add labels to stack.
-# 4. Comment jenkins merge on stack.
-
-# 5. Merge stacked PR. In the background, monitor the base PR if it's merged, and then if it is, then pull && rebase.
+import os
 import argparse
 import json
 import subprocess
 import time
+import tempfile
 
 def shell_out(command):
+    print(f"Running command: {command}")
     try:
         result = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
         stdout = result.stdout.strip()
@@ -107,6 +103,54 @@ def merge_stack(args):
 
         num_prs -= 1
 
+def edit_body(args):
+    # TODO: Also persist in the commit body?
+    editor = os.environ.get('EDITOR')
+    if not editor:
+        return ("No EDITOR found in environment.")
+
+    pr_url = get_pr_url()
+    current_pr_body = shell_out(f"gh pr view {pr_url} --json body")
+    current_pr_body = json.loads(current_pr_body)["body"]
+
+    stack_navigation_section = current_pr_body.split('---')[1].strip()
+
+    current_pr_description = shell_out("sl log -r . --template '{desc}'")
+
+    default_template = f"""## What changes are proposed in this pull request?
+
+
+## How is this tested?
+
+
+---
+{stack_navigation_section}
+"""
+
+    # populate temporary file with default template
+    _, filename = tempfile.mkstemp(text=True)
+    with open(filename, 'w') as f:
+        f.write(default_template)
+
+    cmd = '%s %s' % (editor, filename)
+    write_status = subprocess.call(cmd, shell=True)
+
+    if write_status != 0:
+        os.remove(filename)
+        raise Exception("Editor exited unhappily.")
+    
+    with open(filename) as f:
+        if f.read() == default_template:
+            print("No changeswere made, exiting without editing the PR.")
+            return
+
+    shell_out(f"gh pr edit {pr_url} --body-file {filename}")
+
+def review(args):
+    edit_body(args)
+    pr_url = get_pr_url()
+    add_reviewer("databricks/eng-kubernetes-runtime-team", pr_url)
+    add_reviewer("databricks/eng-kubernetes-runtime-team", pr_url)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -128,6 +172,12 @@ def main():
     merge_stack_parser = subparsers.add_parser('mergestack', help='Merges the stack. Continues to wait.')
     merge_stack_parser.add_argument('--num_prs', type=int, help='Number of PRs to merge')
     merge_stack_parser.set_defaults(func=merge_stack)
+
+    add_body_parser = subparsers.add_parser('editbody', help='adds a body in the correct format to the current PR.')
+    add_body_parser.set_defaults(func=edit_body)
+
+    review_parser = subparsers.add_parser("review", help="Prepares a PR for review.")
+    review_parser.set_defaults(func=review)
 
 
     args = parser.parse_args()
