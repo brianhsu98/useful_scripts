@@ -113,17 +113,22 @@ def edit_body(args):
     current_pr_body = shell_out(f"gh pr view {pr_url} --json body")
     current_pr_body = json.loads(current_pr_body)["body"]
 
-    stack_navigation_section = current_pr_body.split('---')[1].strip()
+    is_stacked = False
+    if "---" in current_pr_body:
+        is_stacked = True
+        stack_navigation_section = current_pr_body.split('---')[1].strip()
+        stack_navigation_section = "---\n" + stack_navigation_section
+    else:
+        stack_navigation_section = ""
 
     current_pr_description = shell_out("sl log -r . --template '{desc}'")
 
     default_template = f"""## What changes are proposed in this pull request?
-
+{"Note that this PR is stacked: only review the top commit" if is_stacked else ""}
 
 ## How is this tested?
 
 
----
 {stack_navigation_section}
 """
 

@@ -1,0 +1,13 @@
+#!/bin/bash
+
+file="$2"
+line="$3"
+
+url="https://src.dev.databricks.com/databricks/universe@master/-/blob/${file}?L${line}"
+
+if [[ "$1" == "copy" ]]; then
+        echo "$url" | pbcopy
+elif [[ "$1" == "open" ]]; then 
+        open "$url"
+fi
+
