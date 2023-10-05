@@ -38,9 +38,10 @@ def sync(args):
     with tempfile.NamedTemporaryFile() as temp_file:
         cmd = f"sl export -r 'ancestors(.) and not public()' -o {temp_file.name}"
         shell_out(cmd)
-        cmd = f"scp {temp_file.name} devbox.databricks.com:/tmp/{temp_file.name}"
+        cmd = f"scp {temp_file.name} devbox.databricks.com:/tmp/patchset.patch"
+        shell_out(cmd)
 
-        cmd = f"git apply -f /tmp/{temp_file.name}"
+        cmd = f"git apply /tmp/patchset.patch"
         remote_shell_out(cmd)
 
 
