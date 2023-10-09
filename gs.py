@@ -53,6 +53,20 @@ def edit_pr(args):
             add_reviewer(f"databricks/{team}", pr_url)
     return shell_out(command)
     
+def is_blocked_on_tests(pr_url):
+    command = "gh pr view https://github.com/databricks/universe/pull/388532 --json statusCheckRollup"
+    res = json.loads(shell_out(command))
+
+    checks = res["statusCheckRollup"]
+    is_blocked = False
+    for check in checks:
+        if "context" in check and "[Blocking]" in check["context"]:
+            if "state" in check and check["state"] != "SUCCESS":
+                print(f"PR is blocked by test: {check}")
+                is_blocked = True
+    
+    return is_blocked
+
 def comment_jenkins_merge(pr_url):
     command = f"gh pr comment {pr_url} -b 'jenkins merge'"
     return shell_out(command)
@@ -91,10 +105,14 @@ def merge_stack(args):
             return
 
         add_label("automerge,autoformat", pr_url)
+        merge_check_count = 0
         while not is_merged(pr_url):
             # TODO: Automatically abort or rebase it we fail any tests.
             # TODO: Do we ever need to jenkins merge?
             print(f"{pr_url} is still not merged. Check for any failures in mergability.")
+            if merge_check_count % 5 == 0:
+                if not is_blocked_on_tests(pr_url):
+                    comment_jenkins_merge(pr_url)
             time.sleep(60)
         
         shell_out("sl next")

@@ -1,6 +1,7 @@
 
 import argparse
 import subprocess
+import sys
 import tempfile
 
 DEVBOX_URL = "devbox.databricks.com"
@@ -23,18 +24,32 @@ def shell_out(command):
         raise e
 
 def remote_shell_out(command):
-    remote_shell_cmd = f"ssh {DEVBOX_URL} 'cd universe && {command}'"
-    return shell_out(remote_shell_cmd)
+    remote_shell_cmd = f"ssh {DEVBOX_URL} 'cd ~/universe && {command}'"
+    print(f"command: {remote_shell_cmd}")
+    return subprocess.run(remote_shell_cmd, shell=True, check=True)
 
 def get_current_base():
     return shell_out("sl log -r 'last(public() and ancestors(.))' --template '{node}'")
 
 def clear_remote_state(base_commit):
-    remote_shell_out(f"git reset --hard {base_commit}")
+    try:
+        remote_shell_out(f"git reset --hard {base_commit} && git clean -f -d")
+    except Exception as e:
+        # Try again after fetching.
+        remote_shell_out(f"git fetch origin master")
+        remote_shell_out(f"git reset --hard {base_commit}")
+
+def is_curr_dirty():
+    res = shell_out("sl status")
+    return bool(res)
 
 # Syncs the local directory.
 # Does NOT include dirty files. TODO: Add a log message to indicate this cleanly.
-def sync(args):
+def sync(args, unknown_flags):
+    if is_curr_dirty():
+        print("[WARNING] Current directory is dirty. Those changes will NOT be synced.")
+
+    clear_remote_state(get_current_base())
     with tempfile.NamedTemporaryFile() as temp_file:
         cmd = f"sl export -r 'ancestors(.) and not public()' -o {temp_file.name}"
         shell_out(cmd)
@@ -44,11 +59,13 @@ def sync(args):
         cmd = f"git apply /tmp/patchset.patch"
         remote_shell_out(cmd)
 
+    print("Successfully synced devserver with current dir")
 
-def run(args):
-    command = " ".join([ALIASES[cmd] if cmd in ALIASES else cmd for cmd in args.cmd])
-    remote_shell_cmd = f"ssh {DEVBOX_URL} 'cd universe && {command}'"
-    subprocess.call(remote_shell_cmd, shell=True)
+
+
+def run(args, unknown_flags):
+    command = " ".join([ALIASES[cmd] if cmd in ALIASES else cmd for cmd in sys.argv[2:]])
+    remote_shell_out(command)
 
 
 def main():
@@ -62,9 +79,10 @@ def main():
     run_parser.add_argument("cmd", nargs='+', help="The command to execute on the remote server.")
     run_parser.set_defaults(func=run)
 
-    args = parser.parse_args()
+    args, unknown = parser.parse_known_args()
+    print(args, unknown)
     if hasattr(args, "func"):
-        args.func(args)
+        args.func(args, unknown)
     else:
         parser.print_help()
 
