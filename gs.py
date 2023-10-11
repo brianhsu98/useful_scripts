@@ -7,6 +7,7 @@ import tempfile
 
 def shell_out(command):
     print(f"Running command: {command}")
+    result = None
     try:
         result = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
         stdout = result.stdout.strip()
@@ -16,6 +17,8 @@ def shell_out(command):
         return stdout
     except subprocess.CalledProcessError as e:
         print(f"Error executing command: {e}")
+        if result:
+            print(result.stderr.strip())
         raise e
 
 
@@ -54,7 +57,7 @@ def edit_pr(args):
     return shell_out(command)
     
 def is_blocked_on_tests(pr_url):
-    command = "gh pr view https://github.com/databricks/universe/pull/388532 --json statusCheckRollup"
+    command = f"gh pr view {pr_url} --json statusCheckRollup"
     res = json.loads(shell_out(command))
 
     checks = res["statusCheckRollup"]
@@ -89,6 +92,18 @@ def update_stack(args):
         shell_out("sl prev")
 
     shell_out(f"sl goto {current_commit}")
+
+def publish(args):
+    current_commit = shell_out("sl log -r . --template '{node}'")
+    while not is_master():
+        pr_url = get_pr_url()
+        add_reviewer("databricks/eng-kubernetes-runtime-team", pr_url)
+        add_reviewer("databricks/eng-kubernetes-runtime-team", pr_url)
+
+        shell_out("sl prev")
+
+    shell_out(f"sl goto {current_commit}")
+
 
 def is_merged(pr_url):
     command = f"gh pr view {pr_url} --json state"
@@ -220,6 +235,9 @@ def main():
 
     sync_parser = subparsers.add_parser("sync", help="Syncs local commit description with github")
     sync_parser.set_defaults(func=sync)
+
+    publish_parser = subparsers.add_parser("publish", help="Puts the PRs out for review.")
+    publish_parser.set_defaults(func=publish)
 
 
     args = parser.parse_args()

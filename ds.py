@@ -7,7 +7,8 @@ import tempfile
 DEVBOX_URL = "devbox.databricks.com"
 
 ALIASES = {
-    "buck": "bazel"
+    "buck": "bazel",
+    "kubecfg" : "~/universe/bin/kubecfg"
 }
 
 def shell_out(command):
@@ -24,7 +25,7 @@ def shell_out(command):
         raise e
 
 def remote_shell_out(command):
-    remote_shell_cmd = f"ssh {DEVBOX_URL} 'cd ~/universe && {command}'"
+    remote_shell_cmd = f"ssh -t {DEVBOX_URL} 'cd ~/universe && {command}'"
     print(f"command: {remote_shell_cmd}")
     return subprocess.run(remote_shell_cmd, shell=True, check=True)
 
@@ -32,12 +33,13 @@ def get_current_base():
     return shell_out("sl log -r 'last(public() and ancestors(.))' --template '{node}'")
 
 def clear_remote_state(base_commit):
+    reset_cmd = f"git reset --hard {base_commit} && git clean -f -d"
     try:
-        remote_shell_out(f"git reset --hard {base_commit} && git clean -f -d")
+        remote_shell_out(reset_cmd)
     except Exception as e:
         # Try again after fetching.
         remote_shell_out(f"git fetch origin master")
-        remote_shell_out(f"git reset --hard {base_commit}")
+        remote_shell_out(reset_cmd)
 
 def is_curr_dirty():
     res = shell_out("sl status")
@@ -80,7 +82,6 @@ def main():
     run_parser.set_defaults(func=run)
 
     args, unknown = parser.parse_known_args()
-    print(args, unknown)
     if hasattr(args, "func"):
         args.func(args, unknown)
     else:
