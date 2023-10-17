@@ -1,3 +1,4 @@
+import asyncio
 import os
 import argparse
 import json
@@ -20,6 +21,16 @@ def shell_out(command):
         if result:
             print(result.stderr.strip())
         raise e
+
+async def async_shell_out(command):
+    process = await asyncio.create_subprocess_shell(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    stdout, stderr = await process.communicate()
+    print(stdout)
+    return (stdout, stderr)
 
 
 def get_pr_url():
@@ -93,16 +104,27 @@ def update_stack(args):
 
     shell_out(f"sl goto {current_commit}")
 
-def publish(args):
-    current_commit = shell_out("sl log -r . --template '{node}'")
-    while not is_master():
-        pr_url = get_pr_url()
-        add_reviewer("databricks/eng-kubernetes-runtime-team", pr_url)
-        add_reviewer("databricks/eng-kubernetes-runtime-team", pr_url)
+async def publish(args):
+    res = shell_out("sl log -r 'ancestors(.) and not public()' --template '{github_pull_request_url} {node}\n'")
+    pr_and_commit = [(line.split()[0], line.split()[1]) for line in res.splitlines()]
+    futures = []
+    for pair in pr_and_commit:
+        pr_url, commit = pair
+        reviewer = "databricks/eng-kubernetes-runtime-team"
+        command = f"gh pr edit {pr_url} --add-reviewer {reviewer}"
+        futures.append(async_shell_out(command))
 
-        shell_out("sl prev")
+    await asyncio.gather(*futures)
 
-    shell_out(f"sl goto {current_commit}")
+    futures = []
+    for pair in pr_and_commit:
+        pr_url, commit = pair
+        reviewer = "databricks/eng-kubernetes-runtime-team"
+        command = f"gh pr edit {pr_url} --add-reviewer {reviewer}"
+        futures.append(async_shell_out(command))
+
+    await asyncio.gather(*futures)
+
 
 
 def is_merged(pr_url):
@@ -193,17 +215,35 @@ def review(args):
     add_reviewer("databricks/eng-kubernetes-runtime-team", pr_url)
     add_reviewer("databricks/eng-kubernetes-runtime-team", pr_url)
 
-def sync(args):
-    # TODO: Implement syncing a whole stack at once.
-    pr_url = get_pr_url()
-    title_and_body = json.loads(shell_out(f"gh pr view {pr_url} --json title,body"))
-    _, filename = tempfile.mkstemp(text=True)
-    with open(filename, 'w') as f:
-        f.write(title_and_body["title"])
-        f.write("\n")
-        f.write(title_and_body["body"])
-    
-    shell_out(f"sl metaedit -l {filename}")
+
+async def get_body_and_title(pr_url):
+    stdout, _ = await async_shell_out(f"gh pr view {pr_url} --json title,body")
+    res = json.loads(stdout)
+    return res["title"], res["body"]
+
+async def sync(args):
+    res = shell_out("sl log -r 'ancestors(.) and not public()' --template '{github_pull_request_url} {node}\n'")
+    pr_and_commit = [(line.split()[0], line.split()[1]) for line in res.splitlines()]
+    futs = []
+    for pr, commit in pr_and_commit:
+        futs.append(get_body_and_title(pr))
+
+    res = await asyncio.gather(*futs)
+
+    to_write = {}
+    for i, pr_and_commit in enumerate(pr_and_commit):
+        _, commit = pr_and_commit
+        title, body = res[i]
+        if "---" in body:
+            body = body.split("---")[0].strip()
+        to_write[commit] = {
+            "message": title + "\n" + body
+        }
+
+    with tempfile.NamedTemporaryFile(mode='w', delete=False) as temp_file:
+        temp_file.write(json.dumps(to_write))
+        file_name = temp_file.name
+        shell_out(f"sl metaedit --json-input-file {file_name} --batch")
 
 
 def main():
@@ -234,16 +274,19 @@ def main():
     review_parser.set_defaults(func=review)
 
     sync_parser = subparsers.add_parser("sync", help="Syncs local commit description with github")
-    sync_parser.set_defaults(func=sync)
+    sync_parser.set_defaults(func=sync, is_async=True)
 
     publish_parser = subparsers.add_parser("publish", help="Puts the PRs out for review.")
-    publish_parser.set_defaults(func=publish)
+    publish_parser.set_defaults(func=publish, is_async=True)
 
 
     args = parser.parse_args()
 
     if hasattr(args, 'func'):
-        args.func(args)
+        if hasattr(args, 'is_async') and args.is_async:
+            asyncio.run(args.func(args))
+        else:
+            args.func(args)
     else:
         parser.print_help()
 

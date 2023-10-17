@@ -63,11 +63,16 @@ def sync(args, unknown_flags):
 
     print("Successfully synced devserver with current dir")
 
-
-
 def run(args, unknown_flags):
     command = " ".join([ALIASES[cmd] if cmd in ALIASES else cmd for cmd in sys.argv[2:]])
     remote_shell_out(command)
+
+def run_last(args, unknown_flags):
+    last_command = shell_out("fc -ln -1")
+    print(f"Rerunning last command remotely: {last_command}")
+
+def auth(args, unknown_flags):
+    pass
 
 
 def main():
@@ -80,6 +85,14 @@ def main():
     run_parser = subparsers.add_parser("run", help="Run a command on the remote server.")
     run_parser.add_argument("cmd", nargs='+', help="The command to execute on the remote server.")
     run_parser.set_defaults(func=run)
+
+    run_last_parser = subparsers.add_parser("runlast", help="Run a command on the remote server.")
+    run_last_parser.set_defaults(func=run_last)
+
+    auth_parser = subparsers.add_parser("auth", help="Authenticate for specific services.")
+    auth_parser.add_argument("what", choices=["kube"], help="What to login to")
+    run_last_parser.set_defaults(func=auth)
+
 
     args, unknown = parser.parse_known_args()
     if hasattr(args, "func"):
