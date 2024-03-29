@@ -8,7 +8,7 @@ DEVBOX_URL = "devbox.databricks.com"
 
 ALIASES = {
     "buck": "bazel",
-    "kubecfg" : "~/universe/bin/kubecfg"
+    "kubecfg" : "bin/kubecfg"
 }
 
 def shell_out(command):
@@ -25,7 +25,8 @@ def shell_out(command):
         raise e
 
 def remote_shell_out(command):
-    remote_shell_cmd = f"ssh -t {DEVBOX_URL} 'cd ~/universe && {command}'"
+    # No idea why bash profile isn't working
+    remote_shell_cmd = f"ssh -t {DEVBOX_URL} ' export PATH=$HOME/universe/bin:$PATH; export HCVAULT_DEFAULT_CLI_ROLE=eng-kubernetes-runtime-team; cd ~/universe && {command}'"
     print(f"command: {remote_shell_cmd}")
     return subprocess.run(remote_shell_cmd, shell=True, check=True)
 
@@ -64,15 +65,34 @@ def sync(args, unknown_flags):
     print("Successfully synced devserver with current dir")
 
 def run(args, unknown_flags):
-    command = " ".join([ALIASES[cmd] if cmd in ALIASES else cmd for cmd in sys.argv[2:]])
+    cmds = sys.argv[2:]
+    to_join = []
+    for cmd in cmds:
+        # handles the case where there is a string inside the cmd (for example, if we want to do an && on the remote.)
+        cmd = [ALIASES[cmd] if cmd in ALIASES else cmd for cmd in cmd.split()]
+        to_join.extend(cmd)
+    
+    command = " ".join(to_join)
     remote_shell_out(command)
 
-def run_last(args, unknown_flags):
-    last_command = shell_out("fc -ln -1")
-    print(f"Rerunning last command remotely: {last_command}")
+def run_interactive(args, unknown_flags):
+    selected_command = subprocess.run("fc -ln 0 | sort | uniq | fzf", shell=True, capture_output=True)
+    print("selected_command")
 
 def auth(args, unknown_flags):
-    pass
+    base = "ssh -t -L 8771:127.0.0.1:8771 devbox.databricks.com 'cd universe && {auth_cmd}'"
+
+    if args.what == "kube":
+        auth_cmd = f"bin/tshx --env={args.env} kube-login --all --as=cluster-admin"
+    elif args.what == "harbor-dp":
+        auth_cmd = f"eng-tools/bin/get-harbor-dp-access {args.env}"
+        pass
+    elif args.what == "harbor":
+        auth_cmd = f"eng-tools/bin/get-harbor-access {args.env}"
+    else:
+        print("Unknown arg")
+
+    return subprocess.run(base.format(auth_cmd=auth_cmd), shell=True, check=True)
 
 
 def main():
@@ -83,22 +103,22 @@ def main():
     sync_parser.set_defaults(func=sync)
 
     run_parser = subparsers.add_parser("run", help="Run a command on the remote server.")
-    run_parser.add_argument("cmd", nargs='+', help="The command to execute on the remote server.")
+    run_parser.add_argument("cmd", help="The command to execute on the remote server.")
     run_parser.set_defaults(func=run)
 
-    run_last_parser = subparsers.add_parser("runlast", help="Run a command on the remote server.")
-    run_last_parser.set_defaults(func=run_last)
-
     auth_parser = subparsers.add_parser("auth", help="Authenticate for specific services.")
-    auth_parser.add_argument("what", choices=["kube"], help="What to login to")
-    run_last_parser.set_defaults(func=auth)
+    auth_parser.add_argument("what", help="What to login to")
+    auth_parser.add_argument('--env', choices=['dev', 'staging', 'prod'], help='Environment: dev, staging, or prod.', default='dev')
+    auth_parser.set_defaults(func=auth)
 
+    run_interactive_parser = subparsers.add_parser("ri")
+    run_interactive_parser.set_defaults(func=run_interactive)
+
+    # Default to run.
+    parser.set_defaults(func=run)
 
     args, unknown = parser.parse_known_args()
-    if hasattr(args, "func"):
-        args.func(args, unknown)
-    else:
-        parser.print_help()
+    args.func(args, unknown)
 
 if __name__ == '__main__':
     main()

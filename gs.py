@@ -91,7 +91,7 @@ def is_master():
    return phase == "public"
 
 def update_pr():
-    command = '''sl log -r . --template '{github_pull_request_url}' | xargs -I@ gh pr view @ --json headRefName | jq .headRefName | xargs -I@ sl push --to "b/@" -f'''
+    command = '''sl log -r . --template '{github_pull_request_url}' | xargs -I@ gh pr view @ --json headRefName | jq .headRefName | xargs -I@ sl push --to "d/@" -f'''
     print("Updated PR")
     return shell_out(command)
 
@@ -223,16 +223,16 @@ async def get_body_and_title(pr_url):
 
 async def sync(args):
     res = shell_out("sl log -r 'ancestors(.) and not public()' --template '{github_pull_request_url} {node}\n'")
-    pr_and_commit = [(line.split()[0], line.split()[1]) for line in res.splitlines()]
+    pr_and_commits = [(line.split()[0], line.split()[1]) for line in res.splitlines()]
     futs = []
-    for pr, commit in pr_and_commit:
+    for pr, commit in pr_and_commits:
         futs.append(get_body_and_title(pr))
 
     res = await asyncio.gather(*futs)
 
     to_write = {}
-    for i, pr_and_commit in enumerate(pr_and_commit):
-        _, commit = pr_and_commit
+    for i, pr_and_commit in enumerate(pr_and_commits):
+        pr, commit = pr_and_commit
         title, body = res[i]
         if "---" in body:
             body = body.split("---")[0].strip()
@@ -243,8 +243,11 @@ async def sync(args):
     with tempfile.NamedTemporaryFile(mode='w', delete=False) as temp_file:
         temp_file.write(json.dumps(to_write))
         file_name = temp_file.name
-        shell_out(f"sl metaedit --json-input-file {file_name} --batch")
+    shell_out(f"sl metaedit --json-input-file {file_name}")
 
+def open(args):
+    pr_url = get_pr_url()
+    shell_out(f"open {pr_url}")
 
 def main():
     parser = argparse.ArgumentParser()
@@ -278,6 +281,9 @@ def main():
 
     publish_parser = subparsers.add_parser("publish", help="Puts the PRs out for review.")
     publish_parser.set_defaults(func=publish, is_async=True)
+
+    open_parser = subparsers.add_parser("open", help="Opens PR in browser.")
+    open_parser.set_defaults(func=open)
 
 
     args = parser.parse_args()
